@@ -1,5 +1,6 @@
 'use strict';
 
+import { Platform } from 'react-native';
 import StackTrace from 'stacktrace-js';
 import { Crashlytics } from 'react-native-fabric';
 import SourceMap from 'source-map';
@@ -28,7 +29,7 @@ function init(smap) {
   }
 
   var originalHandler = global.ErrorUtils.getGlobalHandler();
-  function errorHandler(e) {
+  function errorHandler(e, isFatal) {
     StackTrace.fromError(e).then((x)=>Crashlytics.recordCustomExceptionName(e.message, e.message, x.map(row=>{
       const loc = mapper(row);
       return {
@@ -41,7 +42,18 @@ function init(smap) {
     })));
     // And then re-throw the exception with the original handler
     if (originalHandler) {
-      originalHandler(e);
+      if (Platform.OS === 'ios') {
+        originalHandler(e, isFatal);
+      } else {
+        // On Android, throwing the original exception immediately results in the
+        // recordCustomExceptionName() not finishing before the app crashes and therefore not logged
+        // Add a delay to give it time to log the custom JS exception before crashing the app.
+        // The user facing effect of this delay is that separate JS errors will appear as separate
+        // issues in the Crashlytics dashboard.
+        setTimeout(() => {
+          originalHandler(e, isFatal);
+        }, 500);
+      }
     }
   }
   global.ErrorUtils.setGlobalHandler(errorHandler);
